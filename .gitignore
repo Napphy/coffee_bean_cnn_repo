@@ -1,0 +1,55 @@
+# Python
+
+**pycache**/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+
+.venv/
+venv/
+env/
+
+# VS Code
+
+.vscode/
+
+# Datasets
+
+coffee_dataset/
+data/
+dataset_tba/
+coffee-1/
+*.zip
+
+# Weights / checkpoints
+
+*.pth
+*.pt
+*.keras
+*.h5
+*.ckpt
+
+# Weights generated inside runs
+
+runs/**/best_model.keras
+
+# W&B
+
+wandb/
+
+# Jupyter
+
+.ipynb_checkpoints/
+
+# OS files
+
+.DS_Store
+Thumbs.db
+
+# Temporary files
+
+*.tmp
+*.bak
+*.swp
