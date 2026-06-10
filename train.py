@@ -45,15 +45,23 @@ PATIENCE     = 7        # early stopping patience (epochs without val_loss impro
 DATASET_ROOT = Path("coffee_dataset")
 
 BACKBONE_MAP = {
-    "mobilenetv1":  "mobilenet_v2",   # torchvision has no v1; use v2 as closest
+    "squeezenet":   "squeezenet1_1",
+    "shufflenet":   "shufflenet_v2_x1_0",
     "mobilenetv2":  "mobilenet_v2",
     "mobilenetv3":  "mobilenet_v3_large",
     "efficientnet": "efficientnet_b0",
 }
 
+# SqueezeNet1.1  — ~1.2M params, very fast, fire modules
+# ShuffleNetV2   — ~2.3M params, channel shuffle, efficient on CPU+GPU
+# MobileNetV2    — ~3.4M params, inverted residuals
+# MobileNetV3L   — ~5.4M params, hard-swish, SE blocks
+# EfficientNetB0 — ~5.3M params, compound scaling
+ 
+
 # Note: MobileNetV1 was never officially added to torchvision.
 # We map it to MobileNetV2 with a flag so results are clearly labeled.
-# If you have a custom MobileNetV1, swap the loader in get_backbone().
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -63,7 +71,7 @@ def parse_args():
     p = argparse.ArgumentParser(description="Coffee defect classifier — PyTorch")
     p.add_argument("--variety",          required=True, choices=["arabica", "robusta"])
     p.add_argument("--model",            required=True,
-                   choices=["mobilenetv1", "mobilenetv2", "mobilenetv3", "efficientnet"])
+                   choices=["squeezenet", "shufflenet", "mobilenetv2", "mobilenetv3", "efficientnet"])
     p.add_argument("--optimizer",        required=True,
                    choices=["adam", "adamw", "sgd", "rmsprop", "adan"])
     p.add_argument("--lr",               type=float, required=True,
@@ -78,7 +86,6 @@ def parse_args():
                    help="Path to .pth checkpoint from other variety (Phase 3)")
     p.add_argument("--dataset_root",     default=str(DATASET_ROOT))
     return p.parse_args()
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Data
@@ -149,7 +156,7 @@ def get_backbone(model_name: str, dropout: float,
     - pretrained_from=<path>→ load checkpoint, replace head, partial freeze.
     """
     tv_name = BACKBONE_MAP[model_name]
-
+ 
     if pretrained_from:
         # ── Phase 3: load existing checkpoint ──────────────────────────────
         print(f"  Loading checkpoint: {pretrained_from}")
@@ -164,18 +171,39 @@ def get_backbone(model_name: str, dropout: float,
         # ── Phase 1/2: ImageNet weights, frozen backbone ────────────────────
         model = _build_fresh(tv_name, dropout, imagenet=True)
         _freeze_backbone(model, tv_name)
-
+ 
     return model
-
-
+ 
+ 
 def _build_fresh(tv_name: str, dropout: float, imagenet: bool) -> nn.Module:
     weights = "IMAGENET1K_V1" if imagenet else None
-    if tv_name == "mobilenet_v2":
+ 
+    if tv_name == "squeezenet1_1":
+        model = models.squeezenet1_1(weights=weights)
+        # SqueezeNet's classifier is a Conv2d(512, 1000) — replace entirely
+        model.classifier = nn.Sequential(
+            nn.Dropout(p=dropout),
+            nn.Conv2d(512, len(CLASSES), kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d((1, 1)),
+        )
+        model.num_classes = len(CLASSES)
+ 
+    elif tv_name == "shufflenet_v2_x1_0":
+        model = models.shufflenet_v2_x1_0(weights=weights)
+        in_features = model.fc.in_features
+        model.fc = nn.Sequential(
+            nn.Dropout(p=dropout),
+            nn.Linear(in_features, len(CLASSES)),
+        )
+ 
+    elif tv_name == "mobilenet_v2":
         model = models.mobilenet_v2(weights=weights)
         model.classifier = nn.Sequential(
             nn.Dropout(p=dropout),
             nn.Linear(model.last_channel, len(CLASSES)),
         )
+ 
     elif tv_name == "mobilenet_v3_large":
         model = models.mobilenet_v3_large(weights=weights)
         in_features = model.classifier[3].in_features
@@ -183,6 +211,7 @@ def _build_fresh(tv_name: str, dropout: float, imagenet: bool) -> nn.Module:
         model.classifier[0] = nn.Sequential(
             nn.Dropout(p=dropout), model.classifier[0]
         )
+ 
     elif tv_name == "efficientnet_b0":
         model = models.efficientnet_b0(weights=weights)
         in_features = model.classifier[1].in_features
@@ -190,12 +219,30 @@ def _build_fresh(tv_name: str, dropout: float, imagenet: bool) -> nn.Module:
             nn.Dropout(p=dropout),
             nn.Linear(in_features, len(CLASSES)),
         )
+ 
     return model
-
-
+ 
+ 
 def _replace_head(model: nn.Module, tv_name: str, dropout: float) -> nn.Module:
-    """Swap out the final Linear layer only (keeps rest of weights intact)."""
-    if tv_name == "mobilenet_v2":
+    """Swap out the final classifier only (keeps backbone weights intact)."""
+    if tv_name == "squeezenet1_1":
+        model.classifier = nn.Sequential(
+            nn.Dropout(p=dropout),
+            nn.Conv2d(512, len(CLASSES), kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d((1, 1)),
+        )
+        model.num_classes = len(CLASSES)
+ 
+    elif tv_name == "shufflenet_v2_x1_0":
+        in_features = model.fc[-1].in_features \
+            if hasattr(model.fc[-1], "in_features") else 1024
+        model.fc = nn.Sequential(
+            nn.Dropout(p=dropout),
+            nn.Linear(in_features, len(CLASSES)),
+        )
+ 
+    elif tv_name == "mobilenet_v2":
         model.classifier = nn.Sequential(
             nn.Dropout(p=dropout),
             nn.Linear(model.last_channel, len(CLASSES)),
@@ -211,29 +258,48 @@ def _replace_head(model: nn.Module, tv_name: str, dropout: float) -> nn.Module:
             nn.Linear(in_features, len(CLASSES)),
         )
     return model
-
-
+ 
+ 
 def _freeze_backbone(model: nn.Module, tv_name: str):
     """Freeze everything except the classifier head."""
-    if tv_name in ("mobilenet_v2", "mobilenet_v3_large", "efficientnet_b0"):
+    if tv_name == "squeezenet1_1":
         for param in model.features.parameters():
             param.requires_grad = False
-
-
+    elif tv_name == "shufflenet_v2_x1_0":
+        # Freeze all conv stages; leave fc unfrozen
+        for name, param in model.named_parameters():
+            if not name.startswith("fc"):
+                param.requires_grad = False
+    elif tv_name in ("mobilenet_v2", "mobilenet_v3_large", "efficientnet_b0"):
+        for param in model.features.parameters():
+            param.requires_grad = False
+ 
+ 
 def _freeze_except_top(model: nn.Module, tv_name: str, n_unfreeze: int = 20):
     """Freeze backbone, unfreeze the last n_unfreeze feature layers + head."""
-    if tv_name in ("mobilenet_v2", "mobilenet_v3_large", "efficientnet_b0"):
+    if tv_name == "squeezenet1_1":
         feature_layers = list(model.features.children())
         freeze_up_to = max(0, len(feature_layers) - n_unfreeze)
         for i, layer in enumerate(feature_layers):
             for param in layer.parameters():
                 param.requires_grad = (i >= freeze_up_to)
-
-
+    elif tv_name == "shufflenet_v2_x1_0":
+        # ShuffleNet stages: conv1, maxpool, stage2, stage3, stage4, conv5, fc
+        # Unfreeze stage4, conv5, fc
+        unfreeze_names = ("stage4", "conv5", "fc")
+        for name, param in model.named_parameters():
+            param.requires_grad = any(name.startswith(u) for u in unfreeze_names)
+    elif tv_name in ("mobilenet_v2", "mobilenet_v3_large", "efficientnet_b0"):
+        feature_layers = list(model.features.children())
+        freeze_up_to = max(0, len(feature_layers) - n_unfreeze)
+        for i, layer in enumerate(feature_layers):
+            for param in layer.parameters():
+                param.requires_grad = (i >= freeze_up_to)
+ 
+ 
 def unfreeze_all(model: nn.Module):
     for param in model.parameters():
         param.requires_grad = True
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Optimizer factory
