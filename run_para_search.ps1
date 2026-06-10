@@ -30,8 +30,8 @@ param(
 )
 
 # ── Config ────────────────────────────────────────────────────────────────────
-$Models     = @("mobilenetv2", "mobilenetv3", "efficientnet") #"mobilenetv1" unavailable in pytorch
-$Varieties  = @("robusta") #done with arabica first
+$Models     = @("squeezenet", "shufflenet") #"mobilenetv1" unavailable in pytorch, "mobilenetv2", "mobilenetv3", "efficientnet", done
+$Varieties  = @("arabica","robusta") 
 $LRs        = @("1e-3", "1e-4", "1e-5")
 $Optimizers = @("adam", "adamw", "sgd", "rmsprop", "adan")
 $BatchSizes = @(8, 16, 32)
