@@ -30,7 +30,7 @@ param(
 )
 
 # ── Config ────────────────────────────────────────────────────────────────────
-$Models     = @("squeezenet") #"mobilenetv1" unavailable in pytorch, "mobilenetv2", "mobilenetv3", "efficientnet", done # bab on , "shufflenet"
+$Models     = @("squeezenet", "shufflenet", "mobilenetv2", "mobilenetv3", "efficientnet")
 $Varieties  = @("arabica","robusta") 
 $LRs        = @("1e-3", "1e-4", "1e-5")
 $Optimizers = @("adam", "adamw", "sgd", "rmsprop", "adan")
