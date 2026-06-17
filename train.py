@@ -59,11 +59,6 @@ BACKBONE_MAP = {
 # EfficientNetB0 — ~5.3M params, compound scaling
  
 
-# Note: MobileNetV1 was never officially added to torchvision.
-# We map it to MobileNetV2 with a flag so results are clearly labeled.
-
-
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Argument parsing
 # ──────────────────────────────────────────────────────────────────────────────
@@ -129,8 +124,9 @@ def load_dataset(variety_dir: Path, split: str, batch_size: int,
         ds,
         batch_size=batch_size,
         shuffle=shuffle,
-        num_workers=4,
+        num_workers=2,
         pin_memory=True,
+        persistent_workers=True,
     )
 
 
@@ -478,7 +474,7 @@ def main():
     head_params = [p for p in model.parameters() if p.requires_grad]
     optimizer = get_optimizer(args.optimizer, head_params, args.lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=3, verbose=True
+        optimizer, mode="min", factor=0.5, patience=3
     )
 
     head_epochs = min(10, args.max_epochs)
@@ -502,7 +498,7 @@ def main():
     unfreeze_all(model)
     optimizer = get_optimizer(args.optimizer, model.parameters(), args.lr / 10)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=3, verbose=True
+        optimizer, mode="min", factor=0.5, patience=3
     )
     stopper.counter = 0   # reset patience for phase B
 
