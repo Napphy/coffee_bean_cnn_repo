@@ -8,10 +8,11 @@ Usage
 -----
 # Phase 1/2 — train from ImageNet weights
 python train.py --variety arabica --model mobilenetv2 --optimizer adam --lr 1e-4 --batch_size 32 --dropout 0.3 --max_epochs 100
+python train.py --variety arabica --model squeezenet  --optimizer adam --lr 1e-4 --batch_size 32 --dropout 0.3 --max_epochs 100
+python train.py --variety arabica --model shufflenet  --optimizer adam --lr 1e-4 --batch_size 32 --dropout 0.3 --max_epochs 100
 
-# Phase 3 — fine-tune a variety-trained checkpoint on the other variety
-python train.py --variety robusta --model mobilenetv2 --optimizer adam --lr 1e-4 --batch_size 32 --dropout 0.3 --max_epochs 100 \
-    --pretrained_from runs/phase12_arabica_mobilenetv2_adam_lr1e-4_bs32_do0.3/best_model.pth
+# Phase 3 - fine-tune a variety-trained checkpoint on the other variety
+python train.py --variety robusta --model mobilenetv2 --optimizer adam --lr 1e-4 --batch_size 32 --dropout 0.3 --max_epochs 100 --pretrained_from runs/phase12_arabica_mobilenetv2_adam_lr1e-4_bs32_do0.3/best_model.pth
 
 Dependencies
 ------------
@@ -51,13 +52,12 @@ BACKBONE_MAP = {
     "mobilenetv3":  "mobilenet_v3_large",
     "efficientnet": "efficientnet_b0",
 }
-
 # SqueezeNet1.1  — ~1.2M params, very fast, fire modules
 # ShuffleNetV2   — ~2.3M params, channel shuffle, efficient on CPU+GPU
 # MobileNetV2    — ~3.4M params, inverted residuals
 # MobileNetV3L   — ~5.4M params, hard-swish, SE blocks
 # EfficientNetB0 — ~5.3M params, compound scaling
- 
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Argument parsing
@@ -81,6 +81,7 @@ def parse_args():
                    help="Path to .pth checkpoint from other variety (Phase 3)")
     p.add_argument("--dataset_root",     default=str(DATASET_ROOT))
     return p.parse_args()
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Data
@@ -120,12 +121,22 @@ def load_dataset(variety_dir: Path, split: str, batch_size: int,
     # Reorder class_to_idx to match CLASSES = [black, broken, moldy]
     assert set(ds.classes) == set(CLASSES), \
         f"Expected classes {CLASSES}, found {ds.classes}"
+    # NOTE: empirically tuned for Windows + this dataset size.
+    # num_workers=4 (original default)         -> ~50s/epoch (Windows
+    #   spawns a brand new process per worker per epoch - very expensive)
+    # num_workers=0 (no multiprocessing at all) -> ~5-6s/epoch
+    # num_workers=2 + persistent_workers=True   -> ~2.3-2.6s/epoch after
+    #   a one-time ~20s setup cost on the first epoch (workers are spawned
+    #   once and reused across all subsequent epochs, instead of respawned
+    #   every epoch). This is the fastest configuration found and is now
+    #   the default. If running on Linux/Colab, this should still be at
+    #   least as fast since fork-based spawning is cheaper there anyway.
     return DataLoader(
         ds,
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=2,
-        pin_memory=True,
+        pin_memory=torch.cuda.is_available(),
         persistent_workers=True,
     )
 
@@ -152,12 +163,12 @@ def get_backbone(model_name: str, dropout: float,
     - pretrained_from=<path>→ load checkpoint, replace head, partial freeze.
     """
     tv_name = BACKBONE_MAP[model_name]
- 
+
     if pretrained_from:
         # ── Phase 3: load existing checkpoint ──────────────────────────────
         print(f"  Loading checkpoint: {pretrained_from}")
         model = _build_fresh(tv_name, dropout, imagenet=False)
-        state = torch.load(pretrained_from, map_location="cpu")
+        state = torch.load(pretrained_from, map_location="cpu", weights_only=True)
         model.load_state_dict(state["model_state_dict"])
         # Replace classifier head for the new variety
         model = _replace_head(model, tv_name, dropout)
@@ -167,13 +178,13 @@ def get_backbone(model_name: str, dropout: float,
         # ── Phase 1/2: ImageNet weights, frozen backbone ────────────────────
         model = _build_fresh(tv_name, dropout, imagenet=True)
         _freeze_backbone(model, tv_name)
- 
+
     return model
- 
- 
+
+
 def _build_fresh(tv_name: str, dropout: float, imagenet: bool) -> nn.Module:
     weights = "IMAGENET1K_V1" if imagenet else None
- 
+
     if tv_name == "squeezenet1_1":
         model = models.squeezenet1_1(weights=weights)
         # SqueezeNet's classifier is a Conv2d(512, 1000) — replace entirely
@@ -184,7 +195,7 @@ def _build_fresh(tv_name: str, dropout: float, imagenet: bool) -> nn.Module:
             nn.AdaptiveAvgPool2d((1, 1)),
         )
         model.num_classes = len(CLASSES)
- 
+
     elif tv_name == "shufflenet_v2_x1_0":
         model = models.shufflenet_v2_x1_0(weights=weights)
         in_features = model.fc.in_features
@@ -192,14 +203,14 @@ def _build_fresh(tv_name: str, dropout: float, imagenet: bool) -> nn.Module:
             nn.Dropout(p=dropout),
             nn.Linear(in_features, len(CLASSES)),
         )
- 
+
     elif tv_name == "mobilenet_v2":
         model = models.mobilenet_v2(weights=weights)
         model.classifier = nn.Sequential(
             nn.Dropout(p=dropout),
             nn.Linear(model.last_channel, len(CLASSES)),
         )
- 
+
     elif tv_name == "mobilenet_v3_large":
         model = models.mobilenet_v3_large(weights=weights)
         in_features = model.classifier[3].in_features
@@ -207,7 +218,7 @@ def _build_fresh(tv_name: str, dropout: float, imagenet: bool) -> nn.Module:
         model.classifier[0] = nn.Sequential(
             nn.Dropout(p=dropout), model.classifier[0]
         )
- 
+
     elif tv_name == "efficientnet_b0":
         model = models.efficientnet_b0(weights=weights)
         in_features = model.classifier[1].in_features
@@ -215,10 +226,10 @@ def _build_fresh(tv_name: str, dropout: float, imagenet: bool) -> nn.Module:
             nn.Dropout(p=dropout),
             nn.Linear(in_features, len(CLASSES)),
         )
- 
+
     return model
- 
- 
+
+
 def _replace_head(model: nn.Module, tv_name: str, dropout: float) -> nn.Module:
     """Swap out the final classifier only (keeps backbone weights intact)."""
     if tv_name == "squeezenet1_1":
@@ -229,7 +240,7 @@ def _replace_head(model: nn.Module, tv_name: str, dropout: float) -> nn.Module:
             nn.AdaptiveAvgPool2d((1, 1)),
         )
         model.num_classes = len(CLASSES)
- 
+
     elif tv_name == "shufflenet_v2_x1_0":
         in_features = model.fc[-1].in_features \
             if hasattr(model.fc[-1], "in_features") else 1024
@@ -237,25 +248,28 @@ def _replace_head(model: nn.Module, tv_name: str, dropout: float) -> nn.Module:
             nn.Dropout(p=dropout),
             nn.Linear(in_features, len(CLASSES)),
         )
- 
+
     elif tv_name == "mobilenet_v2":
         model.classifier = nn.Sequential(
             nn.Dropout(p=dropout),
             nn.Linear(model.last_channel, len(CLASSES)),
         )
+
     elif tv_name == "mobilenet_v3_large":
         in_features = model.classifier[-1].in_features \
             if hasattr(model.classifier[-1], "in_features") else 1280
         model.classifier[-1] = nn.Linear(in_features, len(CLASSES))
+
     elif tv_name == "efficientnet_b0":
         in_features = model.classifier[-1].in_features
         model.classifier = nn.Sequential(
             nn.Dropout(p=dropout),
             nn.Linear(in_features, len(CLASSES)),
         )
+
     return model
- 
- 
+
+
 def _freeze_backbone(model: nn.Module, tv_name: str):
     """Freeze everything except the classifier head."""
     if tv_name == "squeezenet1_1":
@@ -269,8 +283,8 @@ def _freeze_backbone(model: nn.Module, tv_name: str):
     elif tv_name in ("mobilenet_v2", "mobilenet_v3_large", "efficientnet_b0"):
         for param in model.features.parameters():
             param.requires_grad = False
- 
- 
+
+
 def _freeze_except_top(model: nn.Module, tv_name: str, n_unfreeze: int = 20):
     """Freeze backbone, unfreeze the last n_unfreeze feature layers + head."""
     if tv_name == "squeezenet1_1":
@@ -291,11 +305,12 @@ def _freeze_except_top(model: nn.Module, tv_name: str, n_unfreeze: int = 20):
         for i, layer in enumerate(feature_layers):
             for param in layer.parameters():
                 param.requires_grad = (i >= freeze_up_to)
- 
- 
+
+
 def unfreeze_all(model: nn.Module):
     for param in model.parameters():
         param.requires_grad = True
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Optimizer factory
@@ -313,13 +328,7 @@ def get_optimizer(name: str, params, lr: float):
         return torch.optim.RMSprop(params, lr=lr, momentum=0.9,
                                     weight_decay=1e-4)
     elif name == "adan":
-        try:
-            from adan import Adan
-        except ImportError:
-            raise ImportError(
-                "Adan not installed. Run:\n"
-                "  pip install git+https://github.com/sail-sg/Adan.git"
-            )
+        from adan import Adan  # local adan.py in the same folder
         # Paper recommends lr 5-10x higher than Adam; we honour the user's
         # explicit --lr so all optimizers are compared on equal footing.
         return Adan(params, lr=lr, weight_decay=2e-2,
@@ -521,7 +530,7 @@ def main():
     # ── Load best checkpoint ─────────────────────────────────────────────────
     print(f"\n[INFO] Loading best checkpoint (epoch {stopper.best_epoch}, "
           f"val_loss={stopper.best_loss:.4f})")
-    state = torch.load(ckpt_path, map_location=device)
+    state = torch.load(ckpt_path, map_location=device, weights_only=True)
     model.load_state_dict(state["model_state_dict"])
 
     # ── Evaluate ─────────────────────────────────────────────────────────────
