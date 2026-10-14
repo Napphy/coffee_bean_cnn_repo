@@ -1,0 +1,69 @@
+Coffee Bean Defect Classification
+
+Requirements
+
+Install PyTorch and torchvision for your CUDA version, then:
+
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+
+python -m pip install --upgrade pip
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu ; for CPU instead of using GPU
+pip install timm pillow
+
+for MAC
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+python3 -m pip install --upgrade pip
+pip install torch torchvision
+pip install timm pillow
+
+
+python3 -c "import tkinter; print('Tkinter is available')"
+
+
+To open the native Tkinter checkpoint tester, run:
+
+python3 test_saved_checkpoint_gui.py
+
+Use the Trained Variety, Model, and Optimizer menus to filter saved checkpoints,
+then select one or more matching runs. Choose an image or folder and click Test
+selected checkpoints. For a single image, choose its Actual label before
+testing. Select a prediction in the results list to view the bean image, edit
+its actual label, and inspect the confidence chart. Folder tests infer actual
+labels from class-named folders such as black, broken, and moldy.
+
+The browser-based tester is also available by running:
+
+python3 checkpoint_web_app.py
+
+An alternative native Qt interface is available with PySide6:
+
+python -m pip install PySide6
+python3 test_saved_checkpoint_qt.py
+
+In the Qt app, choose any combination of Trained Variety, Model, and Optimizer.
+All checkpoints matching those filters run automatically; no individual
+checkpoint selection is needed. Actual labels are inferred only from class
+folders such as black, broken, and moldy.
+
+
+python test_saved_checkpoint.py \
+  --run_dir linuxcheckpoints/fixed_NORLR_arabica_efficientnet_rmsprop_lr1e-4_bs16_do0.2 \
+  --image coffee_dataset/robusta/test \
+  --recursive \
+  --output predictions.csv
+
+To create a visual HTML report for expert validation of a labeled test set:
+
+python visual_validation_report.py \
+	--run_dir linuxruns/fixed_robusta_mobilenetv3_adamw_lr1e-3_bs16_do0.2 \
+	--image coffee_dataset/robusta/test --recursive \
+	--output robusta_validation.html
+
+Open the generated HTML file in a browser. Images are marked correct or errors,
+with predicted/actual labels, confidence, class probabilities, filters, and a
+confusion matrix. Ground truth is inferred from the parent folder names:
+black, broken, and moldy.
