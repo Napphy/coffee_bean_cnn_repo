@@ -53,5 +53,14 @@ Thumbs.db
 *.tmp
 *.bak
 *.swp
+*.html
 
 Adan/
+linuxruns/
+linuxcheckpoints/
+linuxruns_v2/
+old_scripts/
+dupe_runs/
+removed_bs8/
+windowsruns/
+architecture_diagrams/
